@@ -26,4 +26,9 @@ export class AppConfig {
   readonly geminiApiKey = required('GEMINI_API_KEY');
   readonly geminiModel = required('GEMINI_MODEL');
   readonly defaultTimezone = process.env.DEFAULT_TIMEZONE?.trim() || 'Asia/Ho_Chi_Minh';
+  readonly schedulerEnabled = process.env.SCHEDULER_ENABLED === 'true';
+  readonly redisUrl = process.env.REDIS_URL?.trim();
+  readonly publicBaseUrl = process.env.PUBLIC_BASE_URL?.trim().replace(/\/$/, '');
+  readonly dashboardSigningSecret =
+    process.env.DASHBOARD_SIGNING_SECRET?.trim() || this.telegramWebhookSecret;
 }

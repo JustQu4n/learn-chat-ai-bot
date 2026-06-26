@@ -2,12 +2,15 @@ import { Injectable, Logger } from '@nestjs/common';
 import {
   Evaluation,
   PracticeLevel,
+  PracticeSource,
   PracticeSession,
   PracticeSessionStatus,
   Prisma,
   TelegramUpdateStatus,
 } from '@prisma/client';
 import { AiService } from '../ai/ai.service';
+import { AnalyticsService } from '../analytics/analytics.service';
+import { DashboardService } from '../analytics/dashboard.service';
 import {
   ClientScenario,
   ClientTone,
@@ -35,25 +38,31 @@ export class ConversationService {
     private readonly ai: AiService,
     private readonly telegram: TelegramGateway,
     private readonly config: AppConfig,
+    private readonly analytics: AnalyticsService,
+    private readonly dashboard: DashboardService,
   ) {}
 
-  async registerUser(telegramId: bigint, username?: string) {
+  async registerUser(telegramId: bigint, username?: string, chatId?: bigint) {
     return this.prisma.user.upsert({
       where: { telegramId },
       create: {
         telegramId,
         telegramUsername: username ?? null,
+        lastChatId: chatId ?? null,
         timezone: this.config.defaultTimezone,
       },
-      update: username ? { telegramUsername: username } : {},
+      update: {
+        ...(username ? { telegramUsername: username } : {}),
+        ...(chatId ? { lastChatId: chatId } : {}),
+      },
     });
   }
 
   async startPracticeWelcome(telegramId: bigint, chatId: bigint) {
-    await this.registerUser(telegramId);
+    await this.registerUser(telegramId, undefined, chatId);
     await this.telegram.sendText(
       chatId,
-      'Welcome! I will play the client and help you practise professional English. Use /practice to begin an exercise. Reply in English, then I will score it and suggest a stronger version.\n\nCommands: /practice, /skip, /retry, /history, /help',
+      'Welcome! Use /practice to begin an exercise. I will score your reply and suggest a stronger version.\n\nCommands: /practice, /level, /topic, /history, /stats, /schedule, /dashboard, /help',
     );
   }
 
@@ -71,27 +80,44 @@ export class ConversationService {
     );
   }
 
-  async startPractice(input: { telegramId: bigint; chatId: bigint; requestedTopic?: string }) {
-    const user = await this.registerUser(input.telegramId);
+  async sendPlainText(chatId: bigint, text: string) {
+    await this.telegram.sendText(chatId, text);
+  }
+
+  async showSchedulerUsage(chatId: bigint) {
+    await this.telegram.sendText(chatId, 'Usage: /schedule on [1-3] or /schedule off');
+  }
+
+  async startPractice(input: {
+    telegramId: bigint;
+    chatId: bigint;
+    requestedTopic?: string;
+    source?: PracticeSource;
+    silentIfActive?: boolean;
+  }): Promise<boolean> {
+    const user = await this.registerUser(input.telegramId, undefined, input.chatId);
     const active = await this.prisma.practiceSession.findFirst({
       where: { userId: user.id, status: { in: ACTIVE_STATUSES } },
       orderBy: { createdAt: 'desc' },
     });
     if (active) {
-      await this.telegram.sendText(
-        input.chatId,
-        'You already have an active exercise. Reply to it, or use /skip first.',
-      );
-      return;
+      if (!input.silentIfActive) {
+        await this.telegram.sendText(
+          input.chatId,
+          'You already have an active exercise. Reply to it, or use /skip first.',
+        );
+      }
+      return false;
     }
 
-    const topic = this.resolveTopic(input.requestedTopic);
+    const topic = this.resolveTopic(input.requestedTopic, user.preferredTopics);
     let session: PracticeSession;
     try {
       session = await this.prisma.practiceSession.create({
         data: {
           userId: user.id,
           status: PracticeSessionStatus.GENERATING,
+          source: input.source ?? PracticeSource.MANUAL,
           topic,
           telegramChatId: input.chatId,
         },
@@ -102,7 +128,7 @@ export class ConversationService {
           input.chatId,
           'You already have an active exercise. Reply to it, or use /skip first.',
         );
-        return;
+        return false;
       }
       throw error;
     }
@@ -113,6 +139,7 @@ export class ConversationService {
         topic,
         tone: this.randomTone(),
         level: this.toLevelValue(user.level),
+        projectContext: user.projectContext,
       });
     } catch (error) {
       await this.markGenerationFailed(session.id);
@@ -121,7 +148,7 @@ export class ConversationService {
         input.chatId,
         'I could not create an exercise right now. Please try /practice again shortly.',
       );
-      return;
+      return false;
     }
 
     try {
@@ -138,6 +165,7 @@ export class ConversationService {
           telegramClientMessageId: BigInt(sent.messageId),
         },
       });
+      return true;
     } catch (error) {
       await this.markGenerationFailed(session.id);
       this.logExternalFailure('Telegram scenario delivery', session.id, error);
@@ -145,6 +173,7 @@ export class ConversationService {
         input.chatId,
         'I could not create an exercise right now. Please try /practice again shortly.',
       );
+      return false;
     }
   }
 
@@ -162,7 +191,7 @@ export class ConversationService {
       return;
     }
 
-    const user = await this.registerUser(input.telegramId);
+    const user = await this.registerUser(input.telegramId, undefined, input.chatId);
     const session = await this.findWaitingSession(user.id, input.chatId, input.replyToMessageId);
     if (!session) {
       await this.telegram.sendText(input.chatId, 'Please start a new exercise with /practice.');
@@ -185,7 +214,7 @@ export class ConversationService {
   }
 
   async skipPractice(telegramId: bigint, chatId: bigint) {
-    const user = await this.registerUser(telegramId);
+    const user = await this.registerUser(telegramId, undefined, chatId);
     const result = await this.prisma.practiceSession.updateMany({
       where: { userId: user.id, status: { in: ACTIVE_STATUSES } },
       data: { status: PracticeSessionStatus.SKIPPED, completedAt: new Date() },
@@ -199,7 +228,7 @@ export class ConversationService {
   }
 
   async retryEvaluation(telegramId: bigint, chatId: bigint) {
-    const user = await this.registerUser(telegramId);
+    const user = await this.registerUser(telegramId, undefined, chatId);
     const session = await this.prisma.practiceSession.findFirst({
       where: { userId: user.id, status: PracticeSessionStatus.EVALUATION_FAILED },
       orderBy: { createdAt: 'desc' },
@@ -218,7 +247,7 @@ export class ConversationService {
   }
 
   async showHistory(telegramId: bigint, chatId: bigint, sessionId?: string) {
-    const user = await this.registerUser(telegramId);
+    const user = await this.registerUser(telegramId, undefined, chatId);
     if (sessionId) {
       const session = await this.prisma.practiceSession.findFirst({
         where: { id: sessionId, userId: user.id },
@@ -250,6 +279,94 @@ export class ConversationService {
     await this.telegram.sendText(
       chatId,
       `Your latest exercises:\n\n${rows.join('\n\n')}\n\nUse /history <id> for details.`,
+    );
+  }
+
+  async setLevel(telegramId: bigint, chatId: bigint, requestedLevel?: string) {
+    const level = requestedLevel?.toUpperCase();
+    if (!level || !['INTERN', 'FRESHER', 'JUNIOR'].includes(level)) {
+      await this.telegram.sendText(chatId, 'Usage: /level intern, fresher, or junior');
+      return;
+    }
+    await this.prisma.user.update({
+      where: { telegramId },
+      data: { level: level as PracticeLevel },
+    });
+    await this.telegram.sendText(chatId, `Level saved: ${level.toLowerCase()}.`);
+  }
+
+  async setTopicPreference(telegramId: bigint, chatId: bigint, requestedTopic?: string) {
+    if (!requestedTopic || requestedTopic === 'all') {
+      await this.prisma.user.update({ where: { telegramId }, data: { preferredTopics: [] } });
+      await this.telegram.sendText(
+        chatId,
+        'Topic preference cleared. I will choose from all topics.',
+      );
+      return;
+    }
+    if (!TOPICS.includes(requestedTopic as Topic)) {
+      await this.telegram.sendText(chatId, `Unknown topic. Use /topics to see options.`);
+      return;
+    }
+    await this.prisma.user.update({
+      where: { telegramId },
+      data: { preferredTopics: [requestedTopic] },
+    });
+    await this.telegram.sendText(chatId, `Topic preference saved: ${requestedTopic}.`);
+  }
+
+  async setProjectContext(telegramId: bigint, chatId: bigint, text?: string) {
+    if (!text || text.toLowerCase() === 'clear') {
+      await this.prisma.user.update({ where: { telegramId }, data: { projectContext: null } });
+      await this.telegram.sendText(chatId, 'Project context cleared.');
+      return;
+    }
+    if (text.length > 800) {
+      await this.telegram.sendText(chatId, 'Project context must be 800 characters or fewer.');
+      return;
+    }
+    await this.prisma.user.update({ where: { telegramId }, data: { projectContext: text } });
+    await this.telegram.sendText(
+      chatId,
+      'Project context saved for future scenarios. Do not include secrets.',
+    );
+  }
+
+  async showTopics(chatId: bigint) {
+    await this.telegram.sendText(
+      chatId,
+      `Topics:\n${TOPICS.map((topic) => `- ${topic}`).join('\n')}`,
+    );
+  }
+
+  async showStats(telegramId: bigint, chatId: bigint) {
+    const user = await this.registerUser(telegramId, undefined, chatId);
+    const stats = await this.analytics.getStats(user.id, user.timezone);
+    await this.telegram.sendText(
+      chatId,
+      `📈 Practice stats\n\nCompleted: ${stats.completedCount}\nAverage: ${stats.averageScore ?? '—'}/10\nLast 7 days: ${stats.sevenDayAverage ?? '—'}/10\nStreak: ${stats.streakDays} day(s)\n\nCommon areas: Grammar ${stats.categoryCounts.grammar} · Tone ${stats.categoryCounts.tone} · Clarity ${stats.categoryCounts.clarity} · Missing details ${stats.categoryCounts.missing}`,
+    );
+  }
+
+  async sendDashboardLink(telegramId: bigint, chatId: bigint) {
+    const user = await this.registerUser(telegramId, undefined, chatId);
+    const link = await this.dashboard.createLink(user.id);
+    await this.telegram.sendText(
+      chatId,
+      link
+        ? `Your private dashboard link (valid for 15 minutes):\n${link}`
+        : 'Dashboard is not configured yet. Set PUBLIC_BASE_URL in the server environment.',
+    );
+  }
+
+  async deleteMyData(telegramId: bigint, chatId: bigint) {
+    await this.prisma.$transaction([
+      this.prisma.telegramUpdate.deleteMany({ where: { telegramId } }),
+      this.prisma.user.deleteMany({ where: { telegramId } }),
+    ]);
+    await this.telegram.sendText(
+      chatId,
+      'Your practice data has been deleted. Use /start to create a new profile.',
     );
   }
 
@@ -372,8 +489,14 @@ export class ConversationService {
     });
   }
 
-  private resolveTopic(requestedTopic?: string): Topic {
+  private resolveTopic(requestedTopic?: string, preferredTopics?: Prisma.JsonValue): Topic {
     if (requestedTopic && TOPICS.includes(requestedTopic as Topic)) return requestedTopic as Topic;
+    if (Array.isArray(preferredTopics)) {
+      const valid = preferredTopics.filter(
+        (topic): topic is Topic => typeof topic === 'string' && TOPICS.includes(topic as Topic),
+      );
+      if (valid.length) return valid[Math.floor(Math.random() * valid.length)];
+    }
     return TOPICS[Math.floor(Math.random() * TOPICS.length)];
   }
 

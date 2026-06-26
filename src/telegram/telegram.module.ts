@@ -1,11 +1,12 @@
 import { Module } from '@nestjs/common';
 import { ConversationModule } from '../conversation/conversation.module';
 import { MessagingModule } from './messaging.module';
+import { SchedulerModule } from '../scheduler/scheduler.module';
 import { TelegramUpdateRouter } from './telegram.update-router';
 import { TelegramWebhookController } from './telegram.webhook.controller';
 
 @Module({
-  imports: [MessagingModule, ConversationModule],
+  imports: [MessagingModule, ConversationModule, SchedulerModule],
   controllers: [TelegramWebhookController],
   providers: [TelegramUpdateRouter],
 })

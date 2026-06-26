@@ -1,5 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConversationService } from '../conversation/conversation.service';
+import { PracticeSchedulerService } from '../scheduler/practice-scheduler.service';
 
 interface TelegramUser {
   id: number;
@@ -23,7 +24,10 @@ interface TelegramUpdate {
 export class TelegramUpdateRouter {
   private readonly logger = new Logger(TelegramUpdateRouter.name);
 
-  constructor(private readonly conversation: ConversationService) {}
+  constructor(
+    private readonly conversation: ConversationService,
+    private readonly scheduler: PracticeSchedulerService,
+  ) {}
 
   async handle(update: TelegramUpdate) {
     const message = update.message;
@@ -49,7 +53,7 @@ export class TelegramUpdateRouter {
     const chatId = BigInt(message.chat.id);
     const text = message.text?.trim();
     if (!text) {
-      await this.conversation.registerUser(telegramId, message.from!.username);
+      await this.conversation.registerUser(telegramId, message.from!.username, chatId);
       return;
     }
     if (text.startsWith('/')) {
@@ -72,7 +76,7 @@ export class TelegramUpdateRouter {
   ) {
     const [rawCommand, ...args] = text.split(/\s+/);
     const command = rawCommand.split('@')[0].toLowerCase();
-    await this.conversation.registerUser(telegramId, username);
+    await this.conversation.registerUser(telegramId, username, chatId);
     switch (command) {
       case '/start':
         await this.conversation.startPracticeWelcome(telegramId, chatId);
@@ -96,6 +100,33 @@ export class TelegramUpdateRouter {
         return;
       case '/history':
         await this.conversation.showHistory(telegramId, chatId, args[0]);
+        return;
+      case '/level':
+        await this.conversation.setLevel(telegramId, chatId, args[0]);
+        return;
+      case '/topic':
+        await this.conversation.setTopicPreference(telegramId, chatId, args[0]?.toLowerCase());
+        return;
+      case '/context':
+        await this.conversation.setProjectContext(telegramId, chatId, args.join(' '));
+        return;
+      case '/topics':
+        await this.conversation.showTopics(chatId);
+        return;
+      case '/stats':
+        await this.conversation.showStats(telegramId, chatId);
+        return;
+      case '/dashboard':
+        await this.conversation.sendDashboardLink(telegramId, chatId);
+        return;
+      case '/schedule':
+        await this.scheduler.configureSchedule(telegramId, chatId, args[0]?.toLowerCase(), args[1]);
+        return;
+      case '/quiet':
+        await this.scheduler.configureQuietHours(telegramId, chatId, args[0]);
+        return;
+      case '/delete-my-data':
+        await this.conversation.deleteMyData(telegramId, chatId);
         return;
       default:
         await this.conversation.showUnknownCommand(chatId);
