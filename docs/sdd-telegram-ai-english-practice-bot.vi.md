@@ -128,7 +128,7 @@ Hệ thống là Telegram bot đóng vai client/PM nói tiếng Anh. Bot gửi m
 | ID | Yêu cầu |
 |---|---|
 | NFR-01 | Webhook request phải được xác thực bằng Telegram secret token trước khi xử lý. |
-| NFR-02 | Không log `TELEGRAM_BOT_TOKEN`, `OPENAI_API_KEY`, raw webhook secret hay nội dung prompt nội bộ. |
+| NFR-02 | Không log `TELEGRAM_BOT_TOKEN`, `GEMINI_API_KEY`, raw webhook secret hay nội dung prompt nội bộ. |
 | NFR-03 | Mọi thao tác ghi phải idempotent theo Telegram `update_id`; webhook delivery có thể bị gửi lại. |
 | NFR-04 | P95 từ khi nhận reply đến feedback mục tiêu dưới 15 giây, trừ sự cố nhà cung cấp AI. |
 | NFR-05 | AI output bắt buộc qua structured JSON và được validate server-side trước khi lưu/gửi. |
@@ -136,7 +136,7 @@ Hệ thống là Telegram bot đóng vai client/PM nói tiếng Anh. Bot gửi m
 | NFR-07 | Dùng UTC trong database; dùng timezone profile của user khi lập lịch gửi. Mặc định `Asia/Ho_Chi_Minh` hoặc timezone cấu hình triển khai. |
 | NFR-08 | Retry phải có exponential backoff, giới hạn retry và dead-letter/failed-job observability ở Phase 3. |
 | NFR-09 | Không để AI quyết định authorization, trạng thái session hoặc query database. Các quyết định này nằm ở backend. |
-| NFR-10 | Cần có rate limit theo `telegram_id` và timeout/circuit-breaker cho OpenAI để tránh chi phí bất thường. |
+| NFR-10 | Cần có rate limit theo `telegram_id` và timeout/circuit-breaker cho Gemini để tránh chi phí bất thường. |
 
 ## 6. Kiến trúc
 
@@ -146,7 +146,7 @@ flowchart TB
     WA --> GUARD[Verify secret token + deduplicate update]
     GUARD --> BOT[Telegram Bot Adapter]
     BOT --> CONV[Conversation Service]
-    CONV --> AI[OpenAI Service]
+    CONV --> AI[Gemini Service]
     CONV --> DB[(PostgreSQL)]
     BOT -->|sendMessage| TG
 
@@ -164,7 +164,7 @@ flowchart TB
 | Telegram Bot Adapter | Telegraf + NestJS adapter/module | Parse command/text/update, reply/send message, map Telegram DTO sang application command |
 | Webhook API | NestJS Controller | Nhận `POST /webhooks/telegram`, verify secret, trả HTTP nhanh |
 | Conversation Service | NestJS service | State machine, ownership, session creation, orchestration prompt/evaluation |
-| OpenAI Service | OpenAI Node SDK | Gọi Responses API, strict structured output, timeout, retry classification |
+| Gemini Service | Google Gen AI SDK | Gọi Gemini API, JSON schema output, timeout, retry classification |
 | Persistence | PostgreSQL + Prisma | Transaction, uniqueness, lịch sử và query statistics |
 | Scheduler (Phase 3) | NestJS + BullMQ | Lập kế hoạch ngày, delayed jobs, worker gửi bài |
 | Redis (Phase 3) | Redis | BullMQ data, distributed lock, rate-limit/cache nếu cần |
@@ -205,7 +205,7 @@ stateDiagram-v2
 2. Conversation Service tìm/tạo user trong transaction và lock/kiểm tra active session.
 3. Nếu active session tồn tại, trả message hướng dẫn thay vì tạo bài mới.
 4. Tạo `practice_session` trạng thái `generating` với topic đã chọn/random.
-5. OpenAI Service tạo `ClientScenario` có structured output.
+5. Gemini Service tạo `ClientScenario` có structured output.
 6. Lưu client message, cập nhật `waiting_reply` và gọi Telegram `sendMessage`.
 7. Lưu `telegram_client_message_id` để bind reply chính xác.
 8. Nếu send Telegram thất bại, giữ session `generation_failed` (hoặc trạng thái nội bộ `delivery_failed` nếu cần retry gửi); không tạo bài thứ hai.
@@ -215,7 +215,7 @@ stateDiagram-v2
 1. Webhook Guard verify secret và insert `telegram_updates(update_id)` với unique key. Update trùng bị acknowledge, không xử lý lại.
 2. Bot Adapter xác định session bằng `reply_to_message.message_id`; nếu không có, fallback session `waiting_reply` duy nhất của user.
 3. Trong transaction: kiểm tra owner/state, lưu `user_reply`, chuyển sang `evaluating`, tạo evaluation attempt.
-4. OpenAI Service chấm bằng client message + reply + level/topic; không gửi toàn bộ history nếu không cần.
+4. Gemini Service chấm bằng client message + reply + level/topic; không gửi toàn bộ history nếu không cần.
 5. Validate JSON, normalize score, lưu `evaluation` và update session `completed` atomically.
 6. Render feedback từ dữ liệu đã validate và gửi Telegram. Nếu gửi lại Telegram lỗi, feedback vẫn đã lưu; một delivery retry riêng có thể gửi sau.
 
@@ -523,7 +523,7 @@ src/
     dto/
   ai/
     ai.module.ts
-    openai.service.ts
+    ai.service.ts                 # Gemini implementation
     prompts/
       client-v1.ts
       evaluator-v1.ts
@@ -561,9 +561,8 @@ prisma/
 | `TELEGRAM_BOT_TOKEN` | Có | Secret |
 | `TELEGRAM_WEBHOOK_SECRET` | Production | Secret header value |
 | `TELEGRAM_WEBHOOK_URL` | Production | URL HTTPS public |
-| `OPENAI_API_KEY` | Có | Secret |
-| `OPENAI_MODEL` | Có | Pin model name qua config |
-| `OPENAI_TIMEOUT_MS` | Có | e.g. 12000 |
+| `GEMINI_API_KEY` | Có | Secret |
+| `GEMINI_MODEL` | Có | Pin model name qua config |
 | `DEFAULT_TIMEZONE` | Có | IANA timezone |
 | `REDIS_URL` | Phase 3 | Required only when scheduler enabled |
 | `SCHEDULER_ENABLED` | Phase 3 | Explicit feature flag |
@@ -579,7 +578,7 @@ Environment config được validate lúc boot bằng Zod/Joi/class-validator. A
 | User reply không bind được session | Không gọi AI | “Please start a new exercise with /practice.” |
 | User gửi ảnh/voice | Không gọi AI | “For now, please send a text reply in English.” |
 | Telegram update duplicate | Acknowledge, no-op | Không gửi lại feedback |
-| OpenAI timeout/5xx | Retry bounded hoặc `evaluation_failed` | “I saved your reply but couldn’t review it yet. Use /retry shortly.” |
+| Gemini timeout/5xx | Retry bounded hoặc `evaluation_failed` | “I saved your reply but couldn’t review it yet. Use /retry shortly.” |
 | AI JSON invalid | Repair retry; nếu fail mark error | Cùng message `/retry`, không phơi lỗi nội bộ |
 | Telegram send fails | Lưu delivery failure và retry outbound | Không tạo/đánh giá lại duplicate |
 | User blocked bot | Mark outbound permanent failure; scheduler stop/skip | Không thể nhắn trực tiếp |
@@ -590,7 +589,7 @@ Environment config được validate lúc boot bằng Zod/Joi/class-validator. A
 - Rate limit: ví dụ 10 commands/phút và 5 evaluation/10 phút/user; response thân thiện khi vượt ngưỡng.
 - Giới hạn payload length; không lưu binary media vào DB.
 - Không render raw AI/user text bằng HTML. Nếu dùng MarkdownV2 phải escape đầy đủ; plain-text là lựa chọn an toàn cho MVP.
-- OpenAI key chỉ ở server. Browser/dashboard phase sau gọi backend, không gọi OpenAI trực tiếp.
+- Gemini key chỉ ở server. Browser/dashboard phase sau gọi backend, không gọi Gemini trực tiếp.
 - RBAC admin dashboard chỉ được thiết kế sau, không dùng Telegram username làm quyền admin.
 - Dùng TLS, PostgreSQL credentials tối thiểu quyền, backup được mã hóa và secrets từ provider secret manager ở production.
 
@@ -630,7 +629,7 @@ Mỗi event nên có `correlation_id`, hashed/anonymized user reference, session
 - Webhook header sai bị từ chối; header đúng và update duplicate chỉ xử lý một lần.
 - `/start` idempotent tạo một user.
 - `/practice` → mocked AI → send message → reply → mocked evaluation → session/evaluation persisted.
-- OpenAI transient failure tạo trạng thái đúng và `/retry` hoàn tất session.
+- Gemini transient failure tạo trạng thái đúng và `/retry` hoàn tất session.
 - `/history` không đọc được session của Telegram user khác.
 - Phase 3: planner chạy hai lần chỉ có một set `message_jobs`; worker retry không tạo hai Telegram sends.
 
@@ -652,7 +651,7 @@ Mỗi event nên có `correlation_id`, hashed/anonymized user reference, session
 - Khởi tạo NestJS, TypeScript strict, ESLint/Prettier, Docker Compose cho PostgreSQL.
 - Prisma schema/migration `users`, `practice_sessions`, `evaluations`, `telegram_updates`.
 - Config validation, health endpoints, logging và `.env.example` không chứa secret.
-- Xác định OpenAI model/config qua environment, tạo mock AI port cho test.
+- Xác định Gemini model/config qua environment, tạo mock AI port cho test.
 
 **Done khi:** app boot được, migration chạy được và CI chạy unit test/lint.
 
@@ -712,7 +711,7 @@ Render/Fly.io/VPS đều phù hợp. Yêu cầu không thay đổi: HTTPS public
 | Rủi ro / câu hỏi | Tác động | Hướng xử lý |
 |---|---|---|
 | AI feedback không ổn định | Trải nghiệm học kém | Structured output, prompt version, curated evaluation cases trước khi đổi model/prompt |
-| OpenAI latency/cost | Chậm hoặc tốn chi phí | Rate limits, model config, token cap, no-history-by-default, metrics cost |
+| Gemini latency/cost | Chậm hoặc tốn chi phí | Rate limits, model config, token cap, no-history-by-default, metrics cost |
 | Telegram webhook retry | Duplicate feedback | `telegram_updates.update_id` unique + idempotent transitions |
 | Nhiều bài pending | User bối rối | One active session/user + scheduler recheck |
 | Scheduled messages gây phiền | Bot bị block/mute | Explicit opt-in, quiet hours, conservative default, `/schedule off` rõ ràng |
@@ -722,7 +721,7 @@ Render/Fly.io/VPS đều phù hợp. Yêu cầu không thay đổi: HTTPS public
 
 ### Open decisions cần chốt trước production
 
-1. Chọn model OpenAI nào theo chất lượng/chi phí và giới hạn token cụ thể.
+1. Chọn model Gemini nào theo chất lượng/chi phí và giới hạn token cụ thể.
 2. Timezone mặc định là `Asia/Ho_Chi_Minh` hay bắt người dùng chọn ở onboarding.
 3. Beta frequency mặc định: khuyến nghị 1 bài/ngày, không phải 3–5 bài/ngày.
 4. Retention period chính thức và yêu cầu privacy/legal áp dụng.
@@ -738,7 +737,7 @@ Version đầu tiên được coi là hoàn thành khi tất cả điều sau đ
 - Một user reply nhận feedback có schema ổn định: score, grammar, tone, clarity, completeness, missing information, better reply, Vietnamese explanation.
 - User/session/evaluation được lưu ở PostgreSQL; `/history` xem được ít nhất 5 bài gần nhất.
 - Không có hai active session cùng user và Telegram update replay không gây gửi/chấm duplicate.
-- OpenAI/Telegram lỗi không làm mất user reply; `/retry` hoạt động cho evaluation failure.
+- Gemini/Telegram lỗi không làm mất user reply; `/retry` hoạt động cho evaluation failure.
 - Secrets không có trong repo/log; webhook được verify; tests quan trọng pass.
 - Redis và BullMQ **chưa** là dependency bắt buộc. Chúng chỉ được thêm sau khi interactive loop đã ổn định.
 
@@ -771,4 +770,3 @@ Version đầu tiên được coi là hoàn thành khi tất cả điều sau đ
 >
 > Giải thích:
 > Câu trả lời đã nêu việc đang làm và không có blocker. Bản tốt hơn dùng cụm từ tự nhiên hơn trong môi trường công việc và giữ thông tin chính rõ ràng.
-

@@ -8,12 +8,10 @@ function required(name: string): string {
   return value;
 }
 
-function positiveInteger(name: string, fallback: number): number {
-  const raw = process.env[name];
-  if (!raw) return fallback;
-  const value = Number(raw);
+function port(): number {
+  const value = Number(process.env.PORT ?? 3000);
   if (!Number.isInteger(value) || value <= 0) {
-    throw new Error(`${name} must be a positive integer`);
+    throw new Error('PORT must be a positive integer');
   }
   return value;
 }
@@ -21,12 +19,11 @@ function positiveInteger(name: string, fallback: number): number {
 @Injectable()
 export class AppConfig {
   readonly nodeEnv = process.env.NODE_ENV ?? 'development';
-  readonly port = positiveInteger('PORT', 3000);
+  readonly port = port();
   readonly databaseUrl = required('DATABASE_URL');
   readonly telegramBotToken = required('TELEGRAM_BOT_TOKEN');
   readonly telegramWebhookSecret = required('TELEGRAM_WEBHOOK_SECRET');
-  readonly openAiApiKey = required('OPENAI_API_KEY');
-  readonly openAiModel = required('OPENAI_MODEL');
-  readonly openAiTimeoutMs = positiveInteger('OPENAI_TIMEOUT_MS', 12_000);
+  readonly geminiApiKey = required('GEMINI_API_KEY');
+  readonly geminiModel = required('GEMINI_MODEL');
   readonly defaultTimezone = process.env.DEFAULT_TIMEZONE?.trim() || 'Asia/Ho_Chi_Minh';
 }

@@ -6,7 +6,7 @@ Bot Telegram giúp developer luyện trả lời client/PM bằng tiếng Anh: b
 
 - `/start`, `/help`, `/practice [topic]`, `/skip`, `/cancel`, `/retry`, `/history [id]`.
 - Client scenario theo topic phát triển phần mềm và level user mặc định `junior`.
-- OpenAI structured JSON output được validate trước khi lưu.
+- Gemini structured JSON output được validate trước khi lưu.
 - PostgreSQL lưu user, practice session, evaluation và Telegram update idempotency.
 - Webhook secret verification và partial unique index: một active session cho mỗi user.
 
@@ -25,7 +25,7 @@ npm run prisma:deploy
 npm run start:dev
 ```
 
-Điền `TELEGRAM_BOT_TOKEN`, `TELEGRAM_WEBHOOK_SECRET` và `OPENAI_API_KEY` vào `.env`. Không commit file `.env`.
+Điền `TELEGRAM_BOT_TOKEN`, `TELEGRAM_WEBHOOK_SECRET` và `GEMINI_API_KEY` vào `.env`. Không commit file `.env`.
 
 ## Thiết lập Telegram webhook
 
@@ -56,7 +56,7 @@ npm run format:check
 ## Hành vi khi lỗi
 
 - Reply của user được lưu trước khi gọi AI.
-- Nếu OpenAI timeout hoặc trả JSON không hợp lệ, session thành `evaluation_failed`; user chạy `/retry` để chấm lại.
+- Nếu Gemini không phản hồi hoặc trả JSON không hợp lệ, session thành `evaluation_failed`; user chạy `/retry` để chấm lại.
 - Nếu đã lưu evaluation nhưng Telegram gửi feedback thất bại, session vẫn `completed`; tránh chấm/lưu trùng.
 - Telegram `update_id` là idempotency key, nên webhook gửi lại không tạo thêm score hoặc bot message.
 
@@ -73,9 +73,8 @@ npm run format:check
    DATABASE_URL=<Internal Database URL của Render>
    TELEGRAM_BOT_TOKEN=<BotFather token>
    TELEGRAM_WEBHOOK_SECRET=<random secret dài>
-   OPENAI_API_KEY=<OpenAI key>
-   OPENAI_MODEL=gpt-4.1-mini
-   OPENAI_TIMEOUT_MS=12000
+   GEMINI_API_KEY=<Gemini API key>
+   GEMINI_MODEL=gemini-2.5-flash
    DEFAULT_TIMEZONE=Asia/Ho_Chi_Minh
    ```
 

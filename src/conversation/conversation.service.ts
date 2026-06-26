@@ -8,7 +8,14 @@ import {
   TelegramUpdateStatus,
 } from '@prisma/client';
 import { AiService } from '../ai/ai.service';
-import { ClientTone, EvaluationResult, PracticeLevelValue, TOPICS, Topic } from '../ai/ai.types';
+import {
+  ClientScenario,
+  ClientTone,
+  EvaluationResult,
+  PracticeLevelValue,
+  TOPICS,
+  Topic,
+} from '../ai/ai.types';
 import { AppConfig } from '../config/app-config.service';
 import { PrismaService } from '../persistence/prisma.service';
 import { TelegramGateway } from '../telegram/telegram.gateway';
@@ -100,12 +107,24 @@ export class ConversationService {
       throw error;
     }
 
+    let scenario: ClientScenario;
     try {
-      const scenario = await this.ai.generateScenario({
+      scenario = await this.ai.generateScenario({
         topic,
         tone: this.randomTone(),
         level: this.toLevelValue(user.level),
       });
+    } catch (error) {
+      await this.markGenerationFailed(session.id);
+      this.logExternalFailure('AI scenario generation', session.id, error);
+      await this.telegram.sendText(
+        input.chatId,
+        'I could not create an exercise right now. Please try /practice again shortly.',
+      );
+      return;
+    }
+
+    try {
       const sent = await this.telegram.sendText(
         input.chatId,
         `Client message:\n\n${scenario.message}\n\nReply to this message in English.`,
@@ -120,11 +139,8 @@ export class ConversationService {
         },
       });
     } catch (error) {
-      await this.prisma.practiceSession.update({
-        where: { id: session.id },
-        data: { status: PracticeSessionStatus.GENERATION_FAILED },
-      });
-      this.logger.error(`Scenario generation failed for session ${session.id}`);
+      await this.markGenerationFailed(session.id);
+      this.logExternalFailure('Telegram scenario delivery', session.id, error);
       await this.telegram.sendText(
         input.chatId,
         'I could not create an exercise right now. Please try /practice again shortly.',
@@ -412,5 +428,42 @@ export class ConversationService {
 
   private isUniqueConstraint(error: unknown) {
     return error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002';
+  }
+
+  private async markGenerationFailed(sessionId: string) {
+    await this.prisma.practiceSession.update({
+      where: { id: sessionId },
+      data: { status: PracticeSessionStatus.GENERATION_FAILED },
+    });
+  }
+
+  private logExternalFailure(operation: string, sessionId: string, error: unknown) {
+    const details = this.errorDetails(error);
+    this.logger.error(
+      `${operation} failed for session ${sessionId}: ${details.message}`,
+      details.stack,
+    );
+  }
+
+  private errorDetails(error: unknown): { message: string; stack?: string } {
+    if (error instanceof Error) {
+      const status = this.readNumberProperty(error, 'status');
+      const requestId = this.readStringProperty(error, 'request_id');
+      return {
+        message: `${status ? `HTTP ${status} ` : ''}${error.name}: ${error.message}${requestId ? ` (request_id: ${requestId})` : ''}`,
+        stack: error.stack,
+      };
+    }
+    return { message: String(error) };
+  }
+
+  private readNumberProperty(value: object, key: string): number | undefined {
+    const candidate = (value as Record<string, unknown>)[key];
+    return typeof candidate === 'number' ? candidate : undefined;
+  }
+
+  private readStringProperty(value: object, key: string): string | undefined {
+    const candidate = (value as Record<string, unknown>)[key];
+    return typeof candidate === 'string' ? candidate : undefined;
   }
 }

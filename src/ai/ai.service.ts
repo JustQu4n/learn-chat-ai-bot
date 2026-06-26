@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import OpenAI from 'openai';
+import { GoogleGenAI } from '@google/genai';
 import { AppConfig } from '../config/app-config.service';
 import {
   assertClientScenario,
@@ -37,10 +37,10 @@ export interface AiServicePort {
 
 @Injectable()
 export class AiService implements AiServicePort {
-  private readonly client: OpenAI;
+  private readonly client: GoogleGenAI;
 
   constructor(private readonly config: AppConfig) {
-    this.client = new OpenAI({ apiKey: config.openAiApiKey, timeout: config.openAiTimeoutMs });
+    this.client = new GoogleGenAI({ apiKey: config.geminiApiKey });
   }
 
   async generateScenario(input: {
@@ -75,7 +75,7 @@ export class AiService implements AiServicePort {
   }
 
   get model() {
-    return this.config.openAiModel;
+    return this.config.geminiModel;
   }
 
   get promptVersions() {
@@ -88,20 +88,16 @@ export class AiService implements AiServicePort {
     schemaName: string,
     schema: Record<string, unknown>,
   ): Promise<unknown> {
-    const response = await this.client.responses.create({
-      model: this.config.openAiModel,
-      instructions,
-      input: JSON.stringify(input),
-      text: {
-        format: {
-          type: 'json_schema',
-          name: schemaName,
-          strict: true,
-          schema,
-        },
+    const response = await this.client.models.generateContent({
+      model: this.config.geminiModel,
+      contents: JSON.stringify({ schemaName, input }),
+      config: {
+        systemInstruction: instructions,
+        responseMimeType: 'application/json',
+        responseJsonSchema: schema,
       },
     });
-    if (!response.output_text) throw new Error('OpenAI returned no structured output');
-    return JSON.parse(response.output_text) as unknown;
+    if (!response.text) throw new Error('Gemini returned no structured output');
+    return JSON.parse(response.text) as unknown;
   }
 }
