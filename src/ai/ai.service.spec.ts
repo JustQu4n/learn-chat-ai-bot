@@ -1,6 +1,14 @@
 import { AiService } from './ai.service';
+import { ClientScenario } from './ai.types';
 
 type JsonParser = { parseJsonObject(text: string): unknown };
+type ScenarioFallback = {
+  fallbackScenario(input: {
+    topic: 'stripe_invoice_issue';
+    tone: 'polite';
+    level: 'junior';
+  }): ClientScenario;
+};
 
 describe('AiService structured JSON parsing', () => {
   const parser = Object.create(AiService.prototype) as JsonParser;
@@ -21,5 +29,20 @@ describe('AiService structured JSON parsing', () => {
     expect(() => parser.parseJsonObject('Here is your answer, but not JSON.')).toThrow(
       'Gemini returned invalid JSON',
     );
+  });
+
+  it('keeps practice available with a local fallback scenario', () => {
+    const fallback = Object.create(AiService.prototype) as ScenarioFallback;
+    expect(
+      fallback.fallbackScenario({
+        topic: 'stripe_invoice_issue',
+        tone: 'polite',
+        level: 'junior',
+      }),
+    ).toMatchObject({
+      topic: 'stripe_invoice_issue',
+      tone: 'polite',
+      difficulty: 'junior',
+    });
   });
 });

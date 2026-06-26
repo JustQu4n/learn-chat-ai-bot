@@ -5,6 +5,7 @@ export const TOPICS = [
   'deadline_concern',
   'requirement_clarification',
   'payment_subscription_issue',
+  'stripe_invoice_issue',
   'database_performance',
   'redis_cache_issue',
   'deployment_problem',
