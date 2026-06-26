@@ -1,0 +1,99 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum PracticeLevel {
+  INTERN
+  FRESHER
+  JUNIOR
+}
+
+enum PracticeSource {
+  MANUAL
+  SCHEDULED
+}
+
+enum PracticeSessionStatus {
+  GENERATING
+  WAITING_REPLY
+  EVALUATING
+  COMPLETED
+  SKIPPED
+  GENERATION_FAILED
+  EVALUATION_FAILED
+}
+
+enum TelegramUpdateStatus {
+  RECEIVED
+  PROCESSED
+  FAILED
+}
+
+model User {
+  id               String            @id @default(uuid()) @db.Uuid
+  telegramId       BigInt            @unique @map("telegram_id")
+  telegramUsername String?           @db.VarChar(255) @map("telegram_username")
+  level            PracticeLevel     @default(JUNIOR)
+  timezone         String            @default("Asia/Ho_Chi_Minh") @db.VarChar(64)
+  createdAt        DateTime          @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt        DateTime          @updatedAt @map("updated_at") @db.Timestamptz(6)
+  sessions         PracticeSession[]
+
+  @@map("users")
+}
+
+model PracticeSession {
+  id                      String                @id @default(uuid()) @db.Uuid
+  userId                  String                @map("user_id") @db.Uuid
+  source                  PracticeSource        @default(MANUAL)
+  status                  PracticeSessionStatus
+  topic                   String                @db.VarChar(64)
+  clientTone              String?               @map("client_tone") @db.VarChar(32)
+  clientMessage           String?               @map("client_message")
+  telegramChatId          BigInt?               @map("telegram_chat_id")
+  telegramClientMessageId BigInt?               @map("telegram_client_message_id")
+  userReply               String?               @map("user_reply")
+  fallbackBoundReply      Boolean               @default(false) @map("fallback_bound_reply")
+  createdAt               DateTime              @default(now()) @map("created_at") @db.Timestamptz(6)
+  replyReceivedAt         DateTime?             @map("reply_received_at") @db.Timestamptz(6)
+  completedAt             DateTime?             @map("completed_at") @db.Timestamptz(6)
+  user                    User                  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  evaluation              Evaluation?
+
+  @@index([userId, createdAt])
+  @@index([userId, status])
+  @@unique([telegramChatId, telegramClientMessageId])
+  @@map("practice_sessions")
+}
+
+model Evaluation {
+  id                   String          @id @default(uuid()) @db.Uuid
+  practiceSessionId    String          @unique @map("practice_session_id") @db.Uuid
+  overallScore         Decimal         @map("overall_score") @db.Decimal(3, 1)
+  criteria             Json
+  feedback             Json
+  betterReply          String          @map("better_reply")
+  vietnameseExplanation String         @map("vietnamese_explanation")
+  model                String          @db.VarChar(128)
+  promptVersion        String          @map("prompt_version") @db.VarChar(64)
+  createdAt            DateTime        @default(now()) @map("created_at") @db.Timestamptz(6)
+  practiceSession      PracticeSession @relation(fields: [practiceSessionId], references: [id], onDelete: Cascade)
+
+  @@map("evaluations")
+}
+
+model TelegramUpdate {
+  updateId         BigInt               @id @map("update_id")
+  telegramId       BigInt?              @map("telegram_id")
+  processingStatus TelegramUpdateStatus @default(RECEIVED) @map("processing_status")
+  receivedAt       DateTime             @default(now()) @map("received_at") @db.Timestamptz(6)
+  processedAt      DateTime?            @map("processed_at") @db.Timestamptz(6)
+
+  @@index([telegramId])
+  @@map("telegram_updates")
+}
