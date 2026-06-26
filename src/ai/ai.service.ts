@@ -51,8 +51,8 @@ export class AiService implements AiServicePort {
     const result = await this.createStructuredResponse(
       CLIENT_INSTRUCTIONS,
       input,
-      'client_scenario',
       clientScenarioJsonSchema,
+      120,
     );
     assertClientScenario(result);
     return result;
@@ -67,8 +67,8 @@ export class AiService implements AiServicePort {
     const result = await this.createStructuredResponse(
       EVALUATOR_INSTRUCTIONS,
       input,
-      'reply_evaluation',
       evaluationJsonSchema,
+      320,
     );
     assertEvaluation(result);
     return result;
@@ -85,16 +85,17 @@ export class AiService implements AiServicePort {
   private async createStructuredResponse(
     instructions: string,
     input: object,
-    schemaName: string,
     schema: Record<string, unknown>,
+    maxOutputTokens: number,
   ): Promise<unknown> {
     const response = await this.client.models.generateContent({
       model: this.config.geminiModel,
-      contents: JSON.stringify({ schemaName, input }),
+      contents: JSON.stringify(input),
       config: {
         systemInstruction: instructions,
         responseMimeType: 'application/json',
         responseJsonSchema: schema,
+        maxOutputTokens,
       },
     });
     if (!response.text) throw new Error('Gemini returned no structured output');

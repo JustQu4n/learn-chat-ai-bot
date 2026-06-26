@@ -392,16 +392,18 @@ export class ConversationService {
   }
 
   private renderEvaluation(result: EvaluationResult) {
+    const improvements = this.compactImprovements(result).slice(0, 3);
     return [
-      `Score: ${result.overallScore.toFixed(1)}/10`,
-      `Grammar: ${result.criteria.grammar.toFixed(1)} · Tone: ${result.criteria.professionalTone.toFixed(1)} · Clarity: ${result.criteria.clarity.toFixed(1)} · Completeness: ${result.criteria.completeness.toFixed(1)}`,
-      `Better version:\n${result.betterReply}`,
-      this.renderBulletSection('Grammar feedback', result.grammarFeedback),
-      this.renderBulletSection('Tone feedback', result.toneFeedback),
-      this.renderBulletSection('Clarity feedback', result.clarityFeedback),
-      this.renderBulletSection('Missing information', result.missingInformation),
-      `Giải thích:\n${result.vietnameseExplanation}`,
-    ].join('\n\n');
+      `📊 Score: ${result.overallScore.toFixed(1)}/10`,
+      `Grammar ${result.criteria.grammar.toFixed(1)} · Tone ${result.criteria.professionalTone.toFixed(1)} · Clarity ${result.criteria.clarity.toFixed(1)} · Complete ${result.criteria.completeness.toFixed(1)}`,
+      `✨ Better reply\n${result.betterReply}`,
+      improvements.length
+        ? `🔧 Improve\n${improvements.map((item) => `• ${item}`).join('\n')}`
+        : '',
+      `🇻🇳 ${result.vietnameseExplanation}`,
+    ]
+      .filter(Boolean)
+      .join('\n\n');
   }
 
   private renderHistoryDetail(session: PracticeSession & { evaluation: Evaluation | null }) {
@@ -422,8 +424,13 @@ export class ConversationService {
       .join('\n\n');
   }
 
-  private renderBulletSection(title: string, entries: string[]) {
-    return `${title}:\n${entries.length ? entries.map((entry) => `- ${entry}`).join('\n') : '- None identified.'}`;
+  private compactImprovements(result: EvaluationResult): string[] {
+    return [
+      ...result.grammarFeedback.map((item) => `Grammar: ${item}`),
+      ...result.toneFeedback.map((item) => `Tone: ${item}`),
+      ...result.clarityFeedback.map((item) => `Clarity: ${item}`),
+      ...result.missingInformation.map((item) => `Missing: ${item}`),
+    ];
   }
 
   private isUniqueConstraint(error: unknown) {

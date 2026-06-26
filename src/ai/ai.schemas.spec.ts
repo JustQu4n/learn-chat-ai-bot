@@ -36,4 +36,19 @@ describe('AI structured output validation', () => {
       }),
     ).toThrow('Evaluation output');
   });
+
+  it('rejects verbose feedback lists', () => {
+    expect(() =>
+      assertEvaluation({
+        overallScore: 7,
+        criteria: { grammar: 7, professionalTone: 7, clarity: 7, completeness: 7 },
+        grammarFeedback: ['Fix verb tense.', 'Use a more natural phrase.'],
+        toneFeedback: [],
+        clarityFeedback: [],
+        missingInformation: [],
+        betterReply: 'I am reviewing the issue and will send an update shortly.',
+        vietnameseExplanation: 'Chỉ cần sửa một lỗi quan trọng mỗi lần để feedback ngắn và dễ nhớ.',
+      }),
+    ).toThrow('Evaluation output');
+  });
 });

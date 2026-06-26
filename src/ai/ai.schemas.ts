@@ -7,7 +7,7 @@ const shortText = (value: unknown, maxLength: number): value is string =>
   typeof value === 'string' && value.trim().length > 0 && value.length <= maxLength;
 
 const stringList = (value: unknown): value is string[] =>
-  Array.isArray(value) && value.length <= 8 && value.every((item) => shortText(item, 500));
+  Array.isArray(value) && value.length <= 1 && value.every((item) => shortText(item, 180));
 
 export const clientScenarioJsonSchema = {
   type: 'object',
@@ -17,7 +17,7 @@ export const clientScenarioJsonSchema = {
     topic: { type: 'string', enum: [...TOPICS] },
     tone: { type: 'string', enum: ['polite', 'urgent', 'confused', 'casual'] },
     difficulty: { type: 'string', enum: ['intern', 'fresher', 'junior'] },
-    message: { type: 'string', minLength: 1, maxLength: 1200 },
+    message: { type: 'string', minLength: 1, maxLength: 500 },
   },
 } as const;
 
@@ -47,12 +47,12 @@ export const evaluationJsonSchema = {
         completeness: { type: 'number', minimum: 0, maximum: 10 },
       },
     },
-    grammarFeedback: { type: 'array', items: { type: 'string' }, maxItems: 8 },
-    toneFeedback: { type: 'array', items: { type: 'string' }, maxItems: 8 },
-    clarityFeedback: { type: 'array', items: { type: 'string' }, maxItems: 8 },
-    missingInformation: { type: 'array', items: { type: 'string' }, maxItems: 8 },
-    betterReply: { type: 'string', minLength: 1, maxLength: 2000 },
-    vietnameseExplanation: { type: 'string', minLength: 1, maxLength: 2000 },
+    grammarFeedback: { type: 'array', items: { type: 'string' }, maxItems: 1 },
+    toneFeedback: { type: 'array', items: { type: 'string' }, maxItems: 1 },
+    clarityFeedback: { type: 'array', items: { type: 'string' }, maxItems: 1 },
+    missingInformation: { type: 'array', items: { type: 'string' }, maxItems: 1 },
+    betterReply: { type: 'string', minLength: 1, maxLength: 500 },
+    vietnameseExplanation: { type: 'string', minLength: 1, maxLength: 300 },
   },
 } as const;
 
@@ -63,7 +63,7 @@ export function assertClientScenario(value: unknown): asserts value is ClientSce
     !TOPICS.includes(candidate.topic as (typeof TOPICS)[number]) ||
     !['polite', 'urgent', 'confused', 'casual'].includes(candidate.tone as string) ||
     !['intern', 'fresher', 'junior'].includes(candidate.difficulty as string) ||
-    !shortText(candidate.message, 1200)
+    !shortText(candidate.message, 500)
   ) {
     throw new Error('Scenario output does not match the expected schema');
   }
@@ -84,8 +84,8 @@ export function assertEvaluation(value: unknown): asserts value is EvaluationRes
     !stringList(candidate.toneFeedback) ||
     !stringList(candidate.clarityFeedback) ||
     !stringList(candidate.missingInformation) ||
-    !shortText(candidate.betterReply, 2000) ||
-    !shortText(candidate.vietnameseExplanation, 2000)
+    !shortText(candidate.betterReply, 500) ||
+    !shortText(candidate.vietnameseExplanation, 300)
   ) {
     throw new Error('Evaluation output does not match the expected schema');
   }
