@@ -99,6 +99,27 @@ export class AiService implements AiServicePort {
       },
     });
     if (!response.text) throw new Error('Gemini returned no structured output');
-    return JSON.parse(response.text) as unknown;
+    return this.parseJsonObject(response.text);
+  }
+
+  private parseJsonObject(text: string): unknown {
+    const withoutFences = text
+      .trim()
+      .replace(/^```(?:json)?\s*/i, '')
+      .replace(/\s*```$/i, '')
+      .trim();
+    const firstBrace = withoutFences.indexOf('{');
+    const lastBrace = withoutFences.lastIndexOf('}');
+    const json =
+      firstBrace >= 0 && lastBrace > firstBrace
+        ? withoutFences.slice(firstBrace, lastBrace + 1)
+        : withoutFences;
+
+    try {
+      return JSON.parse(json) as unknown;
+    } catch {
+      const preview = withoutFences.replace(/\s+/g, ' ').slice(0, 160);
+      throw new Error(`Gemini returned invalid JSON: ${preview}`);
+    }
   }
 }
