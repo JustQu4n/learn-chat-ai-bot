@@ -29,6 +29,7 @@ export interface AiServicePort {
     topic: Topic;
     tone: ClientTone;
     level: PracticeLevelValue;
+    projectContext?: string | null;
   }): Promise<ClientScenario>;
   evaluateReply(input: {
     clientMessage: string;
@@ -50,6 +51,7 @@ export class AiService implements AiServicePort {
     topic: Topic;
     tone: ClientTone;
     level: PracticeLevelValue;
+    projectContext?: string | null;
   }): Promise<ClientScenario> {
     try {
       const result = await this.createStructuredResponse(

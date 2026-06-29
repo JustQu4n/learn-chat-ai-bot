@@ -34,17 +34,55 @@ enum TelegramUpdateStatus {
   FAILED
 }
 
+enum MessageJobStatus {
+  PLANNED
+  QUEUED
+  SENT
+  SKIPPED
+  FAILED
+  CANCELLED
+}
+
 model User {
   id               String            @id @default(uuid()) @db.Uuid
   telegramId       BigInt            @unique @map("telegram_id")
   telegramUsername String?           @db.VarChar(255) @map("telegram_username")
+  lastChatId       BigInt?           @map("last_chat_id")
   level            PracticeLevel     @default(JUNIOR)
   timezone         String            @default("Asia/Ho_Chi_Minh") @db.VarChar(64)
+  preferredTopics  Json              @default("[]") @map("preferred_topics")
+  schedulerEnabled Boolean           @default(false) @map("scheduler_enabled")
+  scheduleDailyTarget Int            @default(1) @map("schedule_daily_target")
+  quietHoursStart  String?           @db.VarChar(5) @map("quiet_hours_start")
+  quietHoursEnd    String?           @db.VarChar(5) @map("quiet_hours_end")
+  projectContext   String?           @map("project_context")
   createdAt        DateTime          @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt        DateTime          @updatedAt @map("updated_at") @db.Timestamptz(6)
   sessions         PracticeSession[]
+  messageJobs      MessageJob[]
 
   @@map("users")
+}
+
+model MessageJob {
+  id          String           @id @default(uuid()) @db.Uuid
+  userId      String           @map("user_id") @db.Uuid
+  localDate   DateTime         @map("local_date") @db.Date
+  ordinal     Int
+  topic       String           @db.VarChar(64)
+  tone        String           @db.VarChar(32)
+  scheduledAt DateTime         @map("scheduled_at") @db.Timestamptz(6)
+  status      MessageJobStatus @default(PLANNED)
+  bullmqJobId String?          @unique @map("bullmq_job_id") @db.VarChar(255)
+  attemptCount Int             @default(0) @map("attempt_count")
+  lastError   String?          @map("last_error")
+  createdAt   DateTime         @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime         @updatedAt @map("updated_at") @db.Timestamptz(6)
+  user        User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, localDate, ordinal])
+  @@index([status, scheduledAt])
+  @@map("message_jobs")
 }
 
 model PracticeSession {
